@@ -1,0 +1,31 @@
+# Data - never in git, always regenerable
+*.nc
+*.nc4
+*.grib
+*.zarr/
+*.zarr.tmp/
+data/
+raw/
+work/
+
+# Environment
+environment.lock.txt
+.env
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# Dask / Snakemake scratch
+dask-worker-space/
+.snakemake/
+
+# macOS
+.DS_Store
+
+# Outputs - keep final figures only, ignore intermediates
+outputs/scratch/

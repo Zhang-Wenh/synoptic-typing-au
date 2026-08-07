@@ -1,0 +1,25 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The full environment.yml is heavy and pulls compiled geospatial
+      # libraries. CI only needs what the tests import: they run against
+      # synthetic in-memory data and never touch the network.
+      - name: Install test dependencies
+        run: pip install numpy pandas xarray pyyaml pytest
+
+      - name: Run tests
+        run: python -m pytest -v

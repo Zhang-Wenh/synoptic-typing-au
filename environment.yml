@@ -1,0 +1,50 @@
+name: climate
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+
+  # Core
+  - xarray
+  - dask
+  - distributed
+  - numpy
+  - scipy
+  - pandas
+  - bottleneck
+  - flox
+
+  # Storage formats
+  - netcdf4
+  - h5netcdf
+  - zarr
+  - cftime
+  - cf_xarray
+  - rechunker
+
+  # Cloud access
+  - fsspec
+  - gcsfs
+  - s3fs
+  - aiohttp
+  - requests
+  - intake-esm
+
+  # Analysis
+  - scikit-learn
+  - xeofs
+
+  # Plotting
+  - matplotlib
+  - cartopy
+
+  # Command-line tools
+  - cdo
+  - nco
+
+  # Development
+  - jupyterlab
+  - ipykernel
+  - pytest
+  - nbstripout
+  - pyyaml

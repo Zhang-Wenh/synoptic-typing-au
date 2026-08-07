@@ -1,0 +1,8 @@
+# Machine-specific paths.
+# Everything outside the repo lives here. Nothing in src/ hardcodes a path.
+# On a new machine, this is the only file that needs editing.
+
+raw_root:  /Volumes/projects/climate/raw
+work_root: /Volumes/projects/climate/work
+out_root:  /Volumes/projects/climate/out
+tmp_root:  /Volumes/projects/climate/tmp

@@ -1,0 +1,42 @@
+# Spatial domain and analysis period.
+#
+# Two domains are defined:
+#   typing  - the circulation domain the weather types are defined over.
+#             Deliberately larger than the target region: synoptic systems
+#             that affect southeast Australia have centres well outside it.
+#   target  - the region impacts (rainfall, heat) are evaluated over.
+
+typing:
+  lat_north: -10.0
+  lat_south: -60.0
+  lon_west:   90.0
+  lon_east:  180.0
+
+target:
+  lat_north: -33.0
+  lat_south: -40.0
+  lon_west:  140.0
+  lon_east:  150.0
+
+period:
+  # 1979 is the start of the satellite era. ERA5 extends back to 1940, but
+  # Southern Hemisphere pressure fields before 1979 are poorly constrained by
+  # observations and carry known spurious trends. Using them would contaminate
+  # a frequency-change analysis. The back extension is examined separately as a
+  # sensitivity check only.
+  start: "1979-01-01"
+  end:   "2025-12-31"
+
+  # CMIP6 historical experiments end in 2014. Model evaluation is restricted to
+  # this window so that model and reanalysis samples are the same length.
+  eval_start: "1979-01-01"
+  eval_end:   "2014-12-31"
+
+  # ERA5 back extension, sensitivity check only. Not used in the main analysis.
+  extension_start: "1940-01-01"
+  extension_end:   "1978-12-31"
+
+sampling:
+  # ARCO-ERA5 is hourly. Synoptic typing does not need hourly resolution;
+  # 6-hourly is the convention and cuts the volume by a factor of six.
+  hours: [0, 6, 12, 18]

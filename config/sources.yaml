@@ -1,0 +1,40 @@
+# Data sources. All three are publicly readable without an account.
+
+era5:
+  # Analysis-ready ARCO-ERA5 on Google Cloud. Pressure-level variables live
+  # here; some surface fields only exist in the co/ stores.
+  store: "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3"
+  storage_options:
+    token: anon
+  # Variable names are resolved at runtime by src/io/arco.py, because ARCO
+  # uses long CF-style names that are worth confirming rather than assuming.
+  variables:
+    mslp: mean_sea_level_pressure
+    z: geopotential
+    t2m: 2m_temperature
+  levels:
+    z: 500
+
+silo:
+  # Queensland Government gridded climate surfaces, CC BY 4.0.
+  # Bucket is in ap-southeast-2 (Sydney), so transfer from Australia is fast.
+  base_url: "https://s3-ap-southeast-2.amazonaws.com/silo-open-data/Official/annual"
+  variables:
+    - daily_rain
+    - max_temp
+  start_year: 1979
+  end_year: 2025
+
+cmip6:
+  # Pangeo CMIP6 Zarr catalog on Google Cloud. Use the QC'd catalog, not
+  # the -noQC one.
+  catalog: "https://storage.googleapis.com/cmip6/pangeo-cmip6.json"
+  variable_id: psl
+  table_id: day
+  grid_label: gn
+  experiments:
+    - historical
+    - ssp245
+    - ssp370
+  # One realisation per model keeps the ensemble balanced.
+  member_id: r1i1p1f1
