@@ -116,7 +116,7 @@ gives a smooth cycle without absorbing synoptic-scale variance.
 ## Reproducing
 
 ```bash
-git clone https://github.com/<user>/synoptic-typing-au.git
+git clone https://github.com/Zhang-Wenh/synoptic-typing-au.git
 cd synoptic-typing-au
 
 conda env create -f environment.yml
