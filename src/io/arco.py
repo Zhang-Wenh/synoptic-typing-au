@@ -21,6 +21,20 @@ log = logging.getLogger(__name__)
 
 G0 = 9.80665  # standard gravity, for geopotential -> geopotential height
 
+def strip_encoding(ds: xr.Dataset) -> xr.Dataset:
+    """Drop encoding inherited from the source store before writing.
+
+    ARCO arrays carry a numcodecs Blosc compressor from the zarr v2 era.
+    zarr-python v3 rejects it when creating a new array, so the encoding has to
+    be cleared rather than passed through. Cleared variables are re-encoded
+    with zarr's own defaults on write.
+    """
+    ds = ds.copy()
+    for name in ds.variables:
+        ds[name].encoding = {}
+    return ds
+
+
 
 def open_store(store: str, storage_options: dict) -> xr.Dataset:
     """Open the ARCO store lazily. No data is transferred."""
@@ -135,7 +149,8 @@ def write_year(
 
         shutil.rmtree(tmp)
 
-    da.to_dataset(name=da.name).to_zarr(tmp, mode="w", consolidated=True)
+    out = strip_encoding(da.to_dataset(name=da.name))
+    out.to_zarr(tmp, mode="w", consolidated=True)
     tmp.rename(dest)
     log.info("wrote %s", dest.name)
     return dest

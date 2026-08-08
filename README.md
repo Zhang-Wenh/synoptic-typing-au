@@ -182,6 +182,12 @@ reanalysis one.
 Gregorian all appear. `use_cftime=True` is mandatory, and day-of-year
 arithmetic must tolerate a 360-day year.
 
+**Encoding does not survive zarr v2 to v3.** ARCO arrays carry a
+`numcodecs.Blosc` compressor from the zarr v2 era. Passing that encoding
+through to a new store raises `Expected a BytesBytesCodec` under zarr-python
+v3. `src/io/arco.py` clears encoding before writing and lets zarr apply its
+own defaults.
+
 **Chunk along time, not space.** Every downstream reduction runs over time
 across the whole field. Chunking space would force a rechunk before the first
 EOF.
