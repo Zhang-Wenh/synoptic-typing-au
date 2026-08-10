@@ -42,20 +42,52 @@ from src.config import load_domain, load_paths  # noqa: E402
 SEASONS = ["all", "cool", "warm"]
 
 
-def load_rain(paths, target, start: int, end: int) -> xr.DataArray:
-    files = sorted((paths.raw / "silo" / "daily_rain").glob("*.nc"))
+INDEX_UNITS = {
+    "rain": "mm/day",
+    "tmax": "degC",
+    "hot": "fraction of days",
+}
+
+
+def load_impact(paths, target, start: int, end: int, index: str) -> xr.DataArray:
+    """Build the regional daily series for one impact index.
+
+    Three are available and they answer different questions.
+
+      rain  mean daily rainfall
+      tmax  mean daily maximum temperature
+      hot   fraction of days above the 90th percentile of the same half-year
+
+    The distinction between `tmax` and `hot` decides what the decomposition
+    can show. Decomposing mean temperature mostly recovers warming as a
+    within-type intensity change, because the whole distribution shifts and
+    every type moves with it. Hot-day frequency is where circulation matters:
+    whether a day crosses the threshold depends on whether the synoptic
+    situation delivers heat, so a change in how often each type occurs
+    translates directly into a change in exceedances.
+    """
+    variable = "daily_rain" if index == "rain" else "max_temp"
+    folder = paths.raw / "silo" / variable
+
+    files = sorted(folder.glob("*.nc"))
     files = [f for f in files if start <= int(f.name[:4]) <= end]
     if not files:
         raise FileNotFoundError(
-            f"no SILO files for {start}-{end} in {paths.raw / 'silo' / 'daily_rain'}"
+            f"no SILO files for {start}-{end} in {folder}. "
+            f"Run: python scripts/fetch_silo.py --variables {variable}"
         )
-    logging.info("SILO: %d yearly files", len(files))
-    return regional.build(files, target)
+    logging.info("SILO %s: %d yearly files", variable, len(files))
+
+    series = regional.build(files, target, varname=variable)
+    if index == "hot":
+        series = regional.hot_day_indicator(series.compute())
+        logging.info("%s", series.attrs["definition"])
+    return series
 
 
 def report(d: dec.Decomposition, boot: dict, units: str) -> None:
     print(f"\n=== {d.season} season ===")
-    print(f"  mean over period          {np.nansum(d.mean_frequency * d.mean_type_mean):.3f} {units}/day")
+    print(f"  mean over period          {np.nansum(d.mean_frequency * d.mean_type_mean):.4f} {units}")
 
     for name, value, key in [
         ("total trend", d.total, "total"),
@@ -87,6 +119,9 @@ def report(d: dec.Decomposition, boot: dict, units: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", default="")
+    parser.add_argument(
+        "--index", default="rain", choices=["rain", "tmax", "hot"],
+        help="rain, tmax (mean daily maximum), or hot (90th-percentile days)")
     parser.add_argument("--seasons", nargs="*", default=SEASONS)
     parser.add_argument("--boot", type=int, default=1000)
     parser.add_argument("--block", type=int, default=3)
@@ -111,13 +146,14 @@ def main() -> int:
     labels = types["type"].load()
     k = int(types.attrs["k"])
 
-    rain = load_rain(paths, target, start, end).compute()
+    rain = load_impact(paths, target, start, end, args.index).compute()
     rain = regional.align_to(rain, labels)
     labels = labels.sel(time=rain["time"])
 
-    print(f"k = {k}, {rain.sizes['time']} days with both circulation and rainfall")
+    units = INDEX_UNITS[args.index]
+    print(f"k = {k}, {rain.sizes['time']} days with both circulation and impact")
     print(f"region: {rain.attrs['region']}")
-    print(f"mean rainfall: {float(rain.mean()):.3f} mm/day")
+    print(f"index:  {args.index}   mean {float(rain.mean()):.4f} {units}")
 
     if args.dry_run:
         for season in args.seasons:
@@ -133,7 +169,7 @@ def main() -> int:
         table = dec.yearly_table(rain, labels, k, season=s)
         d = dec.decompose(table)
         boot = dec.block_bootstrap(table, n=args.boot, block=args.block)
-        report(d, boot, "mm")
+        report(d, boot, units)
 
     if args.seeds > 1:
         print(f"\n=== across {args.seeds} refitted partitions ===")

@@ -15,6 +15,7 @@ import xarray as xr
 
 from src.attribute.regional import (
     align_to,
+    hot_day_indicator,
     regional_mean,
     shift_to_utc_day,
     subset,
@@ -156,3 +157,74 @@ def test_align_raises_when_nothing_overlaps():
             xr.DataArray(np.ones(10), dims="time", coords={"time": a}),
             xr.DataArray(np.ones(10), dims="time", coords={"time": b}),
         )
+
+
+# --- hot-day indicator ---------------------------------------------------
+
+def make_temp(n_years=10, amplitude=10.0, noise=3.0, trend_per_year=0.0, seed=0):
+    """Daily maximum temperature with an annual cycle peaking in January."""
+    rng = np.random.default_rng(seed)
+    time = pd.date_range("1979-01-01", periods=int(n_years * 365.25), freq="1D")
+    doy = time.dayofyear.values
+    years = (time - time[0]).days.values / 365.25
+    values = (
+        25.0
+        + amplitude * np.sin(2 * np.pi * (doy - 330) / 365.25)
+        + trend_per_year * years
+        + rng.normal(0, noise, time.size)
+    )
+    return xr.DataArray(values, dims="time", coords={"time": time}, name="max_temp")
+
+
+def test_hot_days_are_the_requested_fraction():
+    assert float(hot_day_indicator(make_temp(), percentile=90.0).mean()) == pytest.approx(
+        0.10, abs=0.01
+    )
+
+
+def test_indicator_is_zero_or_one():
+    out = hot_day_indicator(make_temp())
+    assert set(np.unique(out.values)) <= {0.0, 1.0}
+
+
+def test_season_aware_threshold_gives_both_seasons_hot_days():
+    """A single annual threshold leaves the cool season with almost none.
+
+    Southeast Australian summer maxima sit roughly seven degrees above winter
+    ones, so an annual 90th percentile is exceeded almost only in summer and
+    there is nothing left to decompose in the cool season.
+    """
+    temp = make_temp(n_years=15)
+    month = temp["time"].dt.month
+    cool = month.isin([4, 5, 6, 7, 8, 9, 10])
+
+    aware = hot_day_indicator(temp, season_aware=True)
+    plain = hot_day_indicator(temp, season_aware=False)
+
+    assert float(aware.sel(time=cool).mean()) == pytest.approx(0.10, abs=0.02)
+    assert float(plain.sel(time=cool).mean()) < 0.05
+
+
+def test_season_aware_thresholds_differ_between_halves():
+    out = hot_day_indicator(make_temp(n_years=15))
+    assert out.attrs["warm_threshold"] > out.attrs["cool_threshold"]
+
+
+def test_warming_raises_the_hot_day_count_in_later_years():
+    """The indicator must respond to a trend, or there is nothing to attribute."""
+    temp = make_temp(n_years=30, trend_per_year=0.05, noise=2.0)
+    out = hot_day_indicator(temp)
+    first = float(out.isel(time=slice(0, 3650)).mean())
+    last = float(out.isel(time=slice(-3650, None)).mean())
+    assert last > first
+
+
+def test_indicator_records_its_definition():
+    assert "percentile" in hot_day_indicator(make_temp()).attrs["definition"]
+
+
+def test_a_higher_percentile_selects_fewer_days():
+    temp = make_temp(n_years=15)
+    assert float(hot_day_indicator(temp, percentile=99.0).mean()) < float(
+        hot_day_indicator(temp, percentile=90.0).mean()
+    )

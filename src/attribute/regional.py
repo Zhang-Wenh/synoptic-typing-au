@@ -139,6 +139,54 @@ def align_to(series: xr.DataArray, reference: xr.DataArray) -> xr.DataArray:
     return series.sel(time=common)
 
 
+def hot_day_indicator(
+    series: xr.DataArray, percentile: float = 90.0, season_aware: bool = True
+) -> xr.DataArray:
+    """Turn a daily maximum temperature series into a hot-day indicator.
+
+    Mean temperature and hot-day frequency answer different questions, and the
+    difference matters for what the decomposition can show.
+
+    A decomposition of mean temperature is dominated by warming appearing as a
+    within-type intensity change: every type gets hotter because the whole
+    distribution shifts. That is real but it is also the least surprising
+    possible result.
+
+    Hot days are where circulation earns its keep. Whether a given day exceeds
+    a threshold depends on whether the synoptic situation delivers heat, so a
+    change in how often each type occurs translates directly into a change in
+    how often the threshold is crossed. This is the variable where the
+    frequency term has a chance to matter.
+
+    The threshold is a percentile of the series itself, computed separately
+    for the cool and warm halves of the year when `season_aware` is set.
+    A single annual threshold would put almost every hot day in summer and
+    leave the cool season with no exceedances to analyse.
+    """
+    if not season_aware:
+        threshold = float(series.quantile(percentile / 100.0))
+        out = (series > threshold).astype(ACCUM)
+        out.attrs["threshold"] = threshold
+        out.attrs["definition"] = f"daily maximum above the {percentile:g}th percentile"
+        return out.rename("hot_day")
+
+    month = series["time"].dt.month
+    is_cool = month.isin([4, 5, 6, 7, 8, 9, 10])
+
+    cool_threshold = float(series.sel(time=is_cool).quantile(percentile / 100.0))
+    warm_threshold = float(series.sel(time=~is_cool).quantile(percentile / 100.0))
+
+    threshold = xr.where(is_cool, cool_threshold, warm_threshold)
+    out = (series > threshold).astype(ACCUM)
+    out.attrs["cool_threshold"] = cool_threshold
+    out.attrs["warm_threshold"] = warm_threshold
+    out.attrs["definition"] = (
+        f"daily maximum above the {percentile:g}th percentile of its own half "
+        "of the year, so that both seasons have exceedances to analyse"
+    )
+    return out.rename("hot_day")
+
+
 def build(
     paths: list[Path],
     target: dict,
