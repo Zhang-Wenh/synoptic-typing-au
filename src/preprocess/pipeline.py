@@ -18,6 +18,7 @@ import logging
 import shutil
 from pathlib import Path
 
+import numpy as np
 import xarray as xr
 
 from .anomaly import anomaly, daily_mean, detrend
@@ -42,10 +43,44 @@ def year_paths(raw_root: Path, key: str, start: int, end: int) -> list[Path]:
     return paths
 
 
+COORD_DTYPE = "float64"
+
+
+def harmonise(ds: xr.Dataset) -> xr.Dataset:
+    """Make one year's coordinates safe to concatenate with any other year's.
+
+    Two differences appear across years of the same variable, both from
+    changes to the fetch code partway through a download:
+
+      - a scalar coordinate such as `level`, present on years fetched before
+        `src/io/cds.py` learned to strip it
+      - a spatial coordinate dtype that differs between years
+
+    Neither raises. `xr.concat` reconciles them by aligning, which silently
+    promotes dtypes and can produce an empty intersection. Normalising each
+    part first means the pipeline does not depend on every year having been
+    written by the same version of the fetch code.
+    """
+    extra = [c for c in ds.coords if c not in ds.dims]
+    if extra:
+        ds = ds.drop_vars(extra)
+
+    for name in ("latitude", "longitude"):
+        if name in ds.coords and ds[name].dtype != np.dtype(COORD_DTYPE):
+            ds = ds.assign_coords({name: ds[name].astype(COORD_DTYPE)})
+
+    return ds
+
+
 def open_years(paths: list[Path], varname: str | None = None) -> xr.DataArray:
-    """Concatenate yearly Zarr files into one lazy array along time."""
-    parts = [xr.open_zarr(p, consolidated=True) for p in paths]
-    ds = xr.concat(parts, dim="time", combine_attrs="override")
+    """Concatenate yearly Zarr files into one lazy array along time.
+
+    `join="exact"` makes a genuine grid mismatch an error. Without it, two
+    years on different grids would be aligned to their union and the gaps
+    filled with NaN, which nothing downstream would flag.
+    """
+    parts = [harmonise(xr.open_zarr(p, consolidated=True)) for p in paths]
+    ds = xr.concat(parts, dim="time", join="exact", combine_attrs="override")
 
     if varname is None:
         names = list(ds.data_vars)

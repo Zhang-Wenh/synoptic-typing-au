@@ -13,8 +13,13 @@ import xarray as xr
 from src.preprocess import pipeline
 
 
-def write_year(root, key, year, varname="mslp", offset=101300.0, amplitude=500.0):
-    """Write one year of synthetic 6-hourly data in the raw layout."""
+def write_year(root, key, year, varname="mslp", offset=101300.0, amplitude=500.0,
+               scalar_coord=None, lat_dtype="float32"):
+    """Write one year of synthetic 6-hourly data in the raw layout.
+
+    `scalar_coord` and `lat_dtype` reproduce the inconsistencies that appear
+    when the fetch code changes partway through a multi-year download.
+    """
     time = pd.date_range(f"{year}-01-01", f"{year}-12-31 18:00", freq="6h")
     doy = time.dayofyear.values
     signal = offset + amplitude * np.sin(2 * np.pi * doy / 365.25)
@@ -25,11 +30,13 @@ def write_year(root, key, year, varname="mslp", offset=101300.0, amplitude=500.0
         dims=("time", "latitude", "longitude"),
         coords={
             "time": time,
-            "latitude": [-10.0, -20.0, -30.0, -40.0],
+            "latitude": np.array([-10.0, -20.0, -30.0, -40.0], dtype=lat_dtype),
             "longitude": [90.0, 110.0, 130.0, 150.0, 170.0],
         },
         name=varname,
     )
+    if scalar_coord is not None:
+        da = da.assign_coords(**scalar_coord)
     dest = root / key / f"{key}_{year}.zarr"
     dest.parent.mkdir(parents=True, exist_ok=True)
     da.to_dataset().to_zarr(dest, mode="w", consolidated=True)
@@ -175,3 +182,71 @@ def test_run_without_detrending_keeps_the_trend(raw_root, tmp_path):
     assert float(without.max()) - float(without.min()) > float(
         with_detrend.max()
     ) - float(with_detrend.min())
+
+
+# --- inconsistency across years -----------------------------------------
+
+@pytest.fixture(scope="module")
+def mixed_root(tmp_path_factory):
+    """Years written by two different versions of the fetch code.
+
+    This is not hypothetical: a level coordinate was stripped from the CDS
+    reader partway through a 47-year download, so one year lacked a scalar
+    coordinate that the other forty-six carried.
+    """
+    root = tmp_path_factory.mktemp("mixed")
+    for year in (1979, 1980):
+        write_year(root, "z", year, scalar_coord={"level": 500}, lat_dtype="float64")
+    for year in (1981, 1982, 1983):
+        write_year(root, "z", year)
+    return root
+
+
+def test_open_years_survives_a_scalar_coord_on_some_years_only(mixed_root):
+    da = pipeline.open_years(pipeline.year_paths(mixed_root, "z", 1979, 1983))
+    assert "level" not in da.coords
+
+
+def test_open_years_gives_one_coordinate_dtype_across_mixed_years(mixed_root):
+    da = pipeline.open_years(pipeline.year_paths(mixed_root, "z", 1979, 1983))
+    assert da.latitude.dtype == np.dtype("float64")
+
+
+def test_open_years_loses_no_time_steps_to_alignment(mixed_root):
+    """Aligning mismatched coords would drop or NaN-fill; neither is acceptable."""
+    da = pipeline.open_years(pipeline.year_paths(mixed_root, "z", 1979, 1983))
+    assert da.sizes["time"] > 7000
+    assert int(da.isnull().sum()) == 0
+
+
+def test_two_variables_from_mixed_sources_end_up_aligned(mixed_root, raw_root, tmp_path):
+    """The property the whole stage depends on: MSLP and Z500 must share coords."""
+    mslp = pipeline.process(
+        pipeline.open_years(pipeline.year_paths(raw_root, "mslp", 1979, 1983))
+    )
+    z = pipeline.process(
+        pipeline.open_years(pipeline.year_paths(mixed_root, "z", 1979, 1983))
+    )
+    assert mslp.time.equals(z.time)
+    assert mslp.latitude.equals(z.latitude)
+    assert mslp.longitude.equals(z.longitude)
+
+
+def test_open_years_raises_on_a_genuine_grid_mismatch(tmp_path):
+    """A real difference must be an error, not a silent NaN-filled union."""
+    root = tmp_path / "bad"
+    write_year(root, "mslp", 1979)
+    time = pd.date_range("1980-01-01", "1980-12-31 18:00", freq="6h")
+    xr.DataArray(
+        np.ones((time.size, 4, 5), dtype="float32"),
+        dims=("time", "latitude", "longitude"),
+        coords={
+            "time": time,
+            "latitude": [-11.0, -21.0, -31.0, -41.0],
+            "longitude": [90.0, 110.0, 130.0, 150.0, 170.0],
+        },
+        name="mslp",
+    ).to_dataset().to_zarr(root / "mslp" / "mslp_1980.zarr", mode="w", consolidated=True)
+
+    with pytest.raises(ValueError):
+        pipeline.open_years(pipeline.year_paths(root, "mslp", 1979, 1980))
