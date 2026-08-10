@@ -19,7 +19,7 @@ jobs:
       # libraries. CI only needs what the tests import: they run against
       # synthetic in-memory data and never touch the network.
       - name: Install test dependencies
-        run: pip install numpy pandas xarray pyyaml pytest
+        run: pip install numpy pandas xarray pyyaml pytest zarr 'dask[array]'
 
       - name: Run tests
         run: python -m pytest -v
