@@ -153,8 +153,16 @@ def run(
     end: int,
     n_harmonics: int = 3,
     do_detrend: bool = True,
+    tag: str = "",
 ) -> Path:
-    """Full pipeline for one variable."""
+    """Full pipeline for one variable.
+
+    `tag` suffixes the output name so that variants can sit side by side. The
+    detrended and non-detrended versions are both wanted: detrending keeps the
+    classification from grouping days by epoch, but it also removes the drift
+    that a genuine change in type frequency would produce, so frequency trends
+    measured on detrended data are conservative.
+    """
     paths = year_paths(raw_root, key, start, end)
     log.info("%s: %d years", key, len(paths))
 
@@ -168,6 +176,6 @@ def run(
     )
     out.attrs["period"] = f"{start}-{end}"
 
-    dest = write(out, work_root / f"{key}_anom.zarr")
+    dest = write(out, work_root / f"{key}_anom{tag}.zarr")
     log.info("%s: wrote %d daily steps to %s", key, out.sizes["time"], dest.name)
     return dest

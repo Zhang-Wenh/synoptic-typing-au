@@ -83,14 +83,15 @@ def main() -> int:
     )
     parser.add_argument("--seeds", type=int, default=20)
     parser.add_argument("--surrogates", type=int, default=20)
-    parser.add_argument("--out", default="types.zarr")
+    parser.add_argument("--tag", default="", help="suffix matching eof --tag")
+    parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
     paths = load_paths()
     paths.check()
     paths.mkdirs()
 
-    pcs_da, attrs = load_pcs(paths.work)
+    pcs_da, attrs = load_pcs(paths.work, f"eof{args.tag}.zarr")
     print(f"PCs: {pcs_da.sizes['time']} days x {pcs_da.sizes['mode']} modes")
     print(f"EOF preparation: {attrs.get('preparation', 'unknown')}")
 
@@ -131,7 +132,7 @@ def main() -> int:
 
     for name in ds.variables:
         ds[name].encoding = {}
-    dest = paths.work / args.out
+    dest = paths.work / (args.out or f"types{args.tag}.zarr")
     ds.to_zarr(dest, mode="w", consolidated=True)
     print(f"\nwrote {dest}")
     return 0

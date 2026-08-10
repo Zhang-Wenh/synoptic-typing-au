@@ -26,6 +26,9 @@ def main() -> int:
     parser.add_argument("--years", nargs=2, type=int, metavar=("START", "END"))
     parser.add_argument("--harmonics", type=int, default=3)
     parser.add_argument("--no-detrend", action="store_true")
+    parser.add_argument(
+        "--tag", default="",
+        help="suffix for output names, e.g. --tag _nodetrend")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -64,6 +67,7 @@ def main() -> int:
             end=end,
             n_harmonics=args.harmonics,
             do_detrend=not args.no_detrend,
+            tag=args.tag,
         )
     print(f"\ndone in {(time.time() - t0) / 60:.1f} min")
     return 0

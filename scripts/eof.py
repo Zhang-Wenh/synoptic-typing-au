@@ -29,10 +29,10 @@ from src.cluster import eof  # noqa: E402
 from src.config import load_paths  # noqa: E402
 
 
-def load_fields(work: Path, names: list[str]) -> dict[str, xr.DataArray]:
+def load_fields(work: Path, names: list[str], tag: str = "") -> dict[str, xr.DataArray]:
     fields = {}
     for name in names:
-        path = work / f"{name}_anom.zarr"
+        path = work / f"{name}_anom{tag}.zarr"
         if not path.exists():
             raise FileNotFoundError(
                 f"{path} not found. Run scripts/preprocess.py first."
@@ -72,7 +72,8 @@ def main() -> int:
     parser.add_argument(
         "--coarsen", type=int, default=4,
         help="block-average factor. 4 gives 1 degree from ERA5's 0.25")
-    parser.add_argument("--out", default="eof.zarr")
+    parser.add_argument("--tag", default="", help="suffix matching preprocess --tag")
+    parser.add_argument("--out", default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -84,7 +85,7 @@ def main() -> int:
     paths.check()
     paths.mkdirs()
 
-    fields = load_fields(paths.work, args.vars)
+    fields = load_fields(paths.work, args.vars, args.tag)
     n_time = next(iter(fields.values())).sizes["time"]
     c = max(args.coarsen, 1)
     n_cell = sum(
@@ -111,7 +112,7 @@ def main() -> int:
 
     report(result)
 
-    dest = paths.work / args.out
+    dest = paths.work / (args.out or f"eof{args.tag}.zarr")
     ds = xr.Dataset(
         {
             "pcs": result.pcs,

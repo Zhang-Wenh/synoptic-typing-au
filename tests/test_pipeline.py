@@ -250,3 +250,33 @@ def test_open_years_raises_on_a_genuine_grid_mismatch(tmp_path):
 
     with pytest.raises(ValueError):
         pipeline.open_years(pipeline.year_paths(root, "mslp", 1979, 1980))
+
+
+# --- variant outputs -----------------------------------------------------
+
+@pytest.mark.slow
+def test_tag_writes_a_separate_output(raw_root, tmp_path):
+    """Detrended and non-detrended runs must be able to coexist.
+
+    Both are wanted: detrending stops the classification grouping days by
+    epoch, but it also removes the drift a real change in type frequency
+    would produce, so frequency trends from detrended data are conservative.
+    """
+    work = tmp_path / "work"
+    plain = pipeline.run(raw_root, work, "mslp", 1979, 1983)
+    variant = pipeline.run(raw_root, work, "mslp", 1979, 1983,
+                           do_detrend=False, tag="_nodetrend")
+    assert plain != variant
+    assert plain.exists() and variant.exists()
+
+
+@pytest.mark.slow
+def test_untagged_run_is_detrended_and_tagged_run_is_not(raw_root, tmp_path):
+    work = tmp_path / "work"
+    a = xr.open_zarr(pipeline.run(raw_root, work, "mslp", 1979, 1983),
+                     consolidated=True)["mslp"]
+    b = xr.open_zarr(pipeline.run(raw_root, work, "mslp", 1979, 1983,
+                                  do_detrend=False, tag="_nd"),
+                     consolidated=True)["mslp"]
+    assert "detrended" in a.attrs
+    assert "detrended" not in b.attrs

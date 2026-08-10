@@ -39,10 +39,16 @@ def print_transitions(t: np.ndarray, order: np.ndarray) -> None:
 
 
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tag", default="", help="suffix matching classify --tag")
+    args = parser.parse_args()
+
     paths = load_paths()
     paths.check()
 
-    types = xr.open_zarr(paths.work / "types.zarr", consolidated=True)
+    types = xr.open_zarr(paths.work / f"types{args.tag}.zarr", consolidated=True)
     labels = types["type"].load()
     k = int(types.attrs["k"])
     print(f"k = {k}, {labels.sizes['time']} days")
@@ -75,7 +81,7 @@ def main() -> int:
 
     composites = {}
     for name in ("mslp", "z"):
-        path = paths.work / f"{name}_anom.zarr"
+        path = paths.work / f"{name}_anom{args.tag}.zarr"
         ds = xr.open_zarr(path, consolidated=True)
         field = ds[list(ds.data_vars)[0]]
         composites[name] = comp.composite(field, labels, k)
@@ -99,7 +105,7 @@ def main() -> int:
 
     for name in out.variables:
         out[name].encoding = {}
-    dest = paths.work / "composites.zarr"
+    dest = paths.work / f"composites{args.tag}.zarr"
     out.to_zarr(dest, mode="w", consolidated=True)
     print(f"\nwrote {dest}")
     return 0

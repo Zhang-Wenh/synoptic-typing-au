@@ -1,0 +1,160 @@
+"""Reduce gridded rainfall to one daily series for the target region.
+
+Three things have to be right here, and each fails quietly:
+
+  Land masking. SILO is interpolated from station observations, so grid cells
+  over water carry values that are extrapolations from distant stations rather
+  than measurements. Including them biases the regional mean toward whatever
+  the interpolation does offshore. SILO marks these as missing, so masking is
+  a matter of not filling them.
+
+  Area weighting. Cells shrink poleward, so an unweighted mean over-counts the
+  southern part of the region. The effect is small over seven degrees of
+  latitude, but it costs nothing to be right.
+
+  Day alignment. SILO days are Australian local time to 9am, ERA5 days are
+  UTC. A day labelled 15 January in SILO covers roughly 14 January 23:00 UTC
+  to 15 January 23:00 UTC. Rainfall is therefore attributed to circulation
+  roughly a day earlier than the label suggests, which matters when the point
+  of the analysis is which circulation produced which rain.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import numpy as np
+import xarray as xr
+
+from ..preprocess.weights import area_weights
+
+log = logging.getLogger(__name__)
+
+ACCUM = "float64"
+
+
+def open_years(paths: list[Path], varname: str = "daily_rain") -> xr.DataArray:
+    """Open a list of yearly SILO NetCDF files as one lazy array."""
+    ds = xr.open_mfdataset(
+        [str(p) for p in paths],
+        combine="by_coords",
+        chunks={"time": 365},
+        parallel=False,
+    )
+    if varname not in ds.data_vars:
+        raise KeyError(f"{varname!r} not in {list(ds.data_vars)}")
+    return ds[varname]
+
+
+def subset(da: xr.DataArray, target: dict) -> xr.DataArray:
+    """Cut to the target region, whichever way the latitude axis runs."""
+    lat = da["lat"] if "lat" in da.coords else da["latitude"]
+    lat_name = lat.name
+    lon_name = "lon" if "lon" in da.coords else "longitude"
+
+    descending = bool(lat.values[0] > lat.values[-1])
+    lat_slice = (
+        slice(target["lat_north"], target["lat_south"])
+        if descending
+        else slice(target["lat_south"], target["lat_north"])
+    )
+    return da.sel(
+        {lat_name: lat_slice,
+         lon_name: slice(target["lon_west"], target["lon_east"])}
+    )
+
+
+def regional_mean(da: xr.DataArray, lat_name: str | None = None) -> xr.DataArray:
+    """Area-weighted mean over land cells only.
+
+    Cells that are missing everywhere are outside the land mask and drop out.
+    Cells missing on some days only would silently change the effective area
+    day to day, so those are checked rather than assumed away.
+    """
+    if lat_name is None:
+        lat_name = "lat" if "lat" in da.coords else "latitude"
+    lon_name = "lon" if "lon" in da.coords else "longitude"
+
+    weights = area_weights(da[lat_name])
+    valid = da.notnull()
+
+    always = valid.all("time")
+    never = (~valid).all("time")
+    sometimes = int((~always & ~never).sum())
+    if sometimes:
+        log.warning(
+            "%d cells are missing on some days but not all; the effective "
+            "area varies day to day", sometimes
+        )
+
+    return (
+        da.astype(ACCUM)
+        .weighted(weights.where(always, 0.0))
+        .mean(dim=[lat_name, lon_name])
+    )
+
+
+def shift_to_utc_day(da: xr.DataArray, hours: int = -9) -> xr.DataArray:
+    """Relabel SILO days to the UTC day the rain mostly fell on.
+
+    SILO totals run to 9am local time, so a day labelled D covers roughly
+    D-1 23:00 UTC to D 23:00 UTC for southeast Australia. Shifting the label
+    back by nine hours puts each total on the UTC day whose circulation
+    produced most of it.
+
+    Nine hours is an approximation. Eastern Australia moves between UTC+10 and
+    UTC+11, and rain within a 24-hour window is not uniform, so this aligns the
+    bulk rather than every event. The alternative -- leaving the labels alone
+    -- misattributes a systematic fraction of rain to the following day's
+    circulation, which is worse.
+    """
+    shifted = da.assign_coords(
+        time=da["time"] + np.timedelta64(hours, "h")
+    )
+    shifted = shifted.assign_coords(time=shifted["time"].dt.floor("1D"))
+    shifted.attrs = dict(da.attrs)
+    shifted.attrs["day_alignment"] = (
+        f"labels shifted {hours} h so SILO 9am-to-9am totals sit on the UTC "
+        "day whose circulation produced them"
+    )
+    return shifted
+
+
+def align_to(series: xr.DataArray, reference: xr.DataArray) -> xr.DataArray:
+    """Restrict a series to the days a reference series covers.
+
+    An inner join, deliberately. Reindexing to the reference would fill
+    non-overlapping days with NaN, and those would then propagate into the
+    per-type means as silently reduced sample sizes.
+    """
+    common = np.intersect1d(series["time"].values, reference["time"].values)
+    if common.size == 0:
+        raise ValueError("no overlapping days between the two series")
+    if common.size < reference.sizes["time"]:
+        log.info(
+            "%d of %d reference days have no impact data",
+            reference.sizes["time"] - common.size, reference.sizes["time"],
+        )
+    return series.sel(time=common)
+
+
+def build(
+    paths: list[Path],
+    target: dict,
+    varname: str = "daily_rain",
+    shift_hours: int = -9,
+) -> xr.DataArray:
+    """Full path from yearly files to one daily regional series."""
+    da = open_years(paths, varname)
+    da = subset(da, target)
+    log.info("target grid: %s", dict(da.sizes))
+
+    series = regional_mean(da)
+    series = shift_to_utc_day(series, shift_hours)
+    series.name = varname
+    series.attrs["region"] = (
+        f"{target['lat_south']} to {target['lat_north']} lat, "
+        f"{target['lon_west']} to {target['lon_east']} lon"
+    )
+    return series
