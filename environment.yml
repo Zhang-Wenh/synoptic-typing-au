@@ -29,6 +29,7 @@ dependencies:
   - aiohttp
   - requests
   - intake-esm
+  - cdsapi
 
   # Analysis
   - scikit-learn
