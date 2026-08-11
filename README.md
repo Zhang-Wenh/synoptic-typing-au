@@ -5,10 +5,34 @@ ERA5, and using the classification to separate two causes of change in
 southeast Australian rainfall and extreme heat: how often each weather type
 occurs, and how intense conditions are within each type.
 
-**Status: data layer under construction.** Stage 0 of 5. See
-[Roadmap](#roadmap).
+**Status: stages 0 to 3 complete.** Data access, preprocessing,
+classification and attribution all run end to end.
+**[Results](docs/results.md)** has the findings; the short version is below.
 
 ---
+
+## What it found
+
+Over 1979-2025 in southeast Australia:
+
+- Mean daily maximum temperature rose 1.28 degC and hot-day frequency by about
+  5 percentage points. Both are significant, and the decomposition attributes
+  roughly 112 per cent of the warming to within-type intensity change. Since
+  warming is known in advance to be thermodynamic, this serves as a check that
+  the method returns the right answer where the answer is checkable.
+- Circulation change on its own would have cooled the region slightly, by
+  about 0.13 degC. The types whose frequency falls are the warm northerly-flow
+  ones; those that rise bring southerly flow.
+- Cool-season rainfall fell about 17 per cent and warm-season rose about
+  27 per cent, nearly cancelling in the annual mean. Neither is statistically
+  significant.
+- The eight types partition a continuum rather than separating distinct
+  regimes, and the analysis says so: frequencies, persistence and seasonality
+  are all near-uniform, and a 3 per cent perturbation to the input reassigns a
+  third of days. That is the expected result for a mid-latitude ocean sector
+  with no orography to anchor the flow.
+
+Details, diagnostics and limitations: **[docs/results.md](docs/results.md)**.
 
 ## The question
 
