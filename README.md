@@ -228,12 +228,12 @@ a test.
 
 | Stage | Content | Status |
 |---|---|---|
-| 0 | Environment, storage, data access | in progress |
-| 1 | Preprocessing to analysis-ready Zarr | |
-| 2 | Weather type classification | |
-| 3 | Frequency / intensity decomposition | |
-| 4 | CMIP6 evaluation | |
-| 5 | Write-up and figures | |
+| 0 | Environment, storage, data access | complete |
+| 1 | Preprocessing to analysis-ready Zarr | complete |
+| 2 | Weather type classification | complete |
+| 3 | Frequency / intensity decomposition | complete |
+| 4 | CMIP6 evaluation | not started |
+| 5 | Write-up and figures | in progress |
 
 ---
 
