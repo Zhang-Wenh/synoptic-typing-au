@@ -45,12 +45,34 @@ def daily_mean(da: xr.DataArray, time_name: str = "time") -> xr.DataArray:
     return out
 
 
+CALENDAR_YEAR_LENGTH = {
+    "360_day": 360.0,
+    "noleap": 365.0,
+    "365_day": 365.0,
+    "all_leap": 366.0,
+    "366_day": 366.0,
+}
+
+
+def year_length(time: xr.DataArray) -> float:
+    """Days per year for whatever calendar this time axis uses.
+
+    CMIP6 models run on several calendars. A 360-day model reaches day 360 in
+    late December, and dividing by 365.25 would leave the fitted seasonal cycle
+    running about one and a half per cent slow -- enough to smear the harmonic
+    fit and leave a residual annual signal in the anomalies.
+    """
+    first = time.values[0] if time.size else None
+    calendar = getattr(first, "calendar", None)
+    return CALENDAR_YEAR_LENGTH.get(calendar, DAYS_PER_YEAR)
+
+
 def harmonic_design(time: xr.DataArray, n_harmonics: int = 3) -> xr.DataArray:
     """Design matrix of a constant plus n annual harmonics.
 
     Dimensions are (time, term) with 2 * n_harmonics + 1 terms.
     """
-    phase = 2 * np.pi * time.dt.dayofyear.astype(ACCUM) / DAYS_PER_YEAR
+    phase = 2 * np.pi * time.dt.dayofyear.astype(ACCUM) / year_length(time)
 
     terms = [xr.ones_like(phase)]
     labels = ["const"]

@@ -64,3 +64,40 @@ def to_datasets(subset) -> dict[str, xr.Dataset]:
 def calendar_of(ds: xr.Dataset) -> str:
     """Calendar name for a dataset, for logging and sanity checks."""
     return getattr(ds.time.values[0], "calendar", "unknown")
+
+
+def load_model(subset, source_id: str, experiment: str) -> xr.Dataset:
+    """Open one model and experiment as a lazy dataset.
+
+    intake-esm keys are built from the catalog's grouping columns and their
+    exact form varies with the catalog version, so the key is found by
+    matching on the two fields that matter rather than being constructed.
+    """
+    rows = subset.df[
+        (subset.df["source_id"] == source_id)
+        & (subset.df["experiment_id"] == experiment)
+    ]
+    if rows.empty:
+        available = sorted(subset.df["source_id"].unique())
+        raise KeyError(
+            f"{source_id} has no {experiment} in this search; "
+            f"{len(available)} models available"
+        )
+
+    narrowed = subset.search(source_id=source_id, experiment_id=experiment)
+    datasets = to_datasets(narrowed)
+    if len(datasets) != 1:
+        raise ValueError(
+            f"expected one dataset for {source_id} {experiment}, "
+            f"got {len(datasets)}: {list(datasets)}"
+        )
+
+    ds = next(iter(datasets.values()))
+    if "member_id" in ds.dims:
+        ds = ds.isel(member_id=0, drop=True)
+    if "dcpp_init_year" in ds.dims:
+        ds = ds.isel(dcpp_init_year=0, drop=True)
+
+    log.info("%s %s: %s calendar, %d steps",
+             source_id, experiment, calendar_of(ds), ds.sizes.get("time", 0))
+    return ds

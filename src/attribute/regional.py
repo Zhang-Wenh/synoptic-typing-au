@@ -206,3 +206,88 @@ def build(
         f"{target['lon_west']} to {target['lon_east']} lon"
     )
     return series
+
+
+INDEX_UNITS = {
+    "rain": "mm/day",
+    "tmax": "degC",
+    "hot": "fraction of days",
+}
+
+
+def load_index(
+    raw_root, target: dict, start: int, end: int, index: str
+) -> xr.DataArray:
+    """Build the regional daily series for one impact index.
+
+    Three are available and they answer different questions.
+
+      rain  mean daily rainfall
+      tmax  mean daily maximum temperature
+      hot   fraction of days above the 90th percentile of the same half-year
+
+    The distinction between `tmax` and `hot` decides what a decomposition can
+    show. Decomposing mean temperature mostly recovers warming as a
+    within-type intensity change, because the whole distribution shifts and
+    every type moves with it. Hot-day frequency is where circulation matters:
+    whether a day crosses the threshold depends on whether the synoptic
+    situation delivers heat.
+
+    Lives here rather than in a script so that more than one entry point can
+    use it without importing from another script.
+    """
+    variable = "daily_rain" if index == "rain" else "max_temp"
+    folder = Path(raw_root) / "silo" / variable
+
+    files = sorted(folder.glob("*.nc")) if folder.exists() else []
+    files = [f for f in files if start <= int(f.name[:4]) <= end]
+    if not files:
+        raise FileNotFoundError(
+            f"no SILO files for {start}-{end} in {folder}. "
+            f"Run: python scripts/fetch_silo.py --variables {variable}"
+        )
+    log.info("SILO %s: %d yearly files", variable, len(files))
+
+    series = build(files, target, varname=variable)
+    if index == "hot":
+        series = hot_day_indicator(series.compute())
+        log.info("%s", series.attrs["definition"])
+    return series
+
+
+BANDS = {
+    "tropics": {
+        "lat_north": -10.0, "lat_south": -20.0,
+        "lon_west": 112.0, "lon_east": 154.0,
+        "season": "warm",
+        "note": "monsoonal north; nearly all rain falls November to March",
+    },
+    "subtropics": {
+        "lat_north": -20.0, "lat_south": -30.0,
+        "lon_west": 112.0, "lon_east": 154.0,
+        "season": None,
+        "note": "arid interior and subtropical east; no single wet season",
+    },
+    "midlatitudes": {
+        "lat_north": -30.0, "lat_south": -40.0,
+        "lon_west": 112.0, "lon_east": 154.0,
+        "season": "cool",
+        "note": "frontal rainfall, mostly April to October",
+    },
+    "southeast": {
+        "lat_north": -33.0, "lat_south": -40.0,
+        "lon_west": 140.0, "lon_east": 150.0,
+        "season": "cool",
+        "note": "the target region of the earlier analysis, for comparison",
+    },
+}
+"""Latitude bands for comparing the circulation-intensity balance by region.
+
+Each band is analysed in its own wet season. The tropics receive almost all
+their rain between November and March and the midlatitudes between April and
+October, so a single fixed season would compare a real signal in one band
+against near-zero in another.
+
+The three zonal bands meet exactly and do not overlap. The southeast band sits
+inside the midlatitude band on purpose, linking back to the earlier analysis.
+"""

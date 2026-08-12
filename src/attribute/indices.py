@@ -26,7 +26,10 @@ when comparing with published values.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 ACCUM = "float64"
@@ -166,6 +169,79 @@ def ridge_index(
         f"{abs(centre) - half_width:g}S to {abs(centre) + half_width:g}S"
     )
     return index
+
+
+def read_nino34(path: str | Path) -> xr.DataArray:
+    """Read the NOAA PSL Nino 3.4 anomaly file into a monthly series.
+
+    The format is a header line giving the first and last year, then one line
+    per year with twelve monthly values, then trailing metadata lines. Missing
+    months are flagged with a large negative sentinel rather than a gap, so
+    they have to be recognised rather than parsed as data.
+
+    Why this matters for the analysis. Tropical Australian rainfall is
+    dominated by ENSO at interannual scale, and a 47-year record holds only
+    about fifteen ENSO cycles. A trend measured over that record can be
+    produced by where the record happens to start and end in the cycle. A
+    block bootstrap does not catch this: it resamples residuals around the
+    fitted line, so it measures sampling error, not whether the line itself is
+    an artefact of a few strong events.
+    """
+    lines = Path(path).read_text().splitlines()
+    first, last = (int(v) for v in lines[0].split()[:2])
+
+    years, values = [], []
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) != 13:
+            break
+        year = int(parts[0])
+        if not first <= year <= last:
+            break
+        months = [float(v) for v in parts[1:]]
+        years.append(year)
+        values.append(months)
+
+    if not years:
+        raise ValueError(f"no data rows parsed from {path}")
+
+    data = np.array(values, dtype=ACCUM)
+    data[data < -90] = np.nan  # sentinel for missing months
+
+    time = pd.date_range(f"{years[0]}-01-01", periods=data.size, freq="MS")
+    out = xr.DataArray(
+        data.ravel(), dims="time", coords={"time": time}, name="nino34"
+    )
+    out.attrs["source"] = "NOAA PSL, Nino 3.4 SST anomaly"
+    out.attrs["definition"] = "SST anomaly averaged over 5N-5S, 170W-120W"
+    return out.dropna("time")
+
+
+def monthly_to_season(index: xr.DataArray, season: str | None = None) -> xr.DataArray:
+    """Yearly mean of a monthly index, restricted to one season.
+
+    Same season conventions as the decomposition, including counting November
+    and December with the following January so that the austral summer is not
+    split across two calendar years.
+    """
+    month = index["time"].dt.month
+    year = index["time"].dt.year
+
+    if season == "cool":
+        keep = month.isin([4, 5, 6, 7, 8, 9, 10])
+        season_year = year
+    elif season == "warm":
+        keep = month.isin([11, 12, 1, 2, 3])
+        season_year = xr.where(month >= 11, year + 1, year)
+    elif season is None:
+        keep = xr.ones_like(month, dtype=bool)
+        season_year = year
+    else:
+        raise ValueError(f"season must be 'cool', 'warm' or None, got {season!r}")
+
+    sub = index.sel(time=keep)
+    sub = sub.assign_coords(season_year=season_year.sel(time=keep))
+    return sub.groupby("season_year").mean().rename(season_year="year")
 
 
 def residual_trend(

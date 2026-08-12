@@ -42,50 +42,16 @@ from src.config import load_domain, load_paths  # noqa: E402
 SEASONS = ["all", "cool", "warm"]
 
 
-INDEX_UNITS = {
-    "rain": "mm/day",
-    "tmax": "degC",
-    "hot": "fraction of days",
-}
+INDEX_UNITS = regional.INDEX_UNITS
 
 
 def load_impact(paths, target, start: int, end: int, index: str) -> xr.DataArray:
-    """Build the regional daily series for one impact index.
-
-    Three are available and they answer different questions.
-
-      rain  mean daily rainfall
-      tmax  mean daily maximum temperature
-      hot   fraction of days above the 90th percentile of the same half-year
-
-    The distinction between `tmax` and `hot` decides what the decomposition
-    can show. Decomposing mean temperature mostly recovers warming as a
-    within-type intensity change, because the whole distribution shifts and
-    every type moves with it. Hot-day frequency is where circulation matters:
-    whether a day crosses the threshold depends on whether the synoptic
-    situation delivers heat, so a change in how often each type occurs
-    translates directly into a change in exceedances.
-    """
-    variable = "daily_rain" if index == "rain" else "max_temp"
-    folder = paths.raw / "silo" / variable
-
-    files = sorted(folder.glob("*.nc"))
-    files = [f for f in files if start <= int(f.name[:4]) <= end]
-    if not files:
-        raise FileNotFoundError(
-            f"no SILO files for {start}-{end} in {folder}. "
-            f"Run: python scripts/fetch_silo.py --variables {variable}"
-        )
-    logging.info("SILO %s: %d yearly files", variable, len(files))
-
-    series = regional.build(files, target, varname=variable)
-    if index == "hot":
-        series = regional.hot_day_indicator(series.compute())
-        logging.info("%s", series.attrs["definition"])
-    return series
+    """Thin wrapper so the script keeps its own entry point name."""
+    return regional.load_index(paths.raw, target, start, end, index)
 
 
-def report(d: dec.Decomposition, boot: dict, units: str) -> None:
+def report(d: dec.Decomposition, boot: dict, units: str,
+           names: list[str] | None = None) -> None:
     print(f"\n=== {d.season} season ===")
     print(f"  mean over period          {np.nansum(d.mean_frequency * d.mean_type_mean):.4f} {units}")
 
@@ -110,8 +76,9 @@ def report(d: dec.Decomposition, boot: dict, units: str) -> None:
 
     print(f"\n  per type: frequency trend, mean impact, contribution")
     for i in range(d.freq_trend.size):
-        print(f"    {i}  df/dt {d.freq_trend[i]:+.5f}/yr   "
-              f"ybar {d.mean_type_mean[i]:6.3f}   "
+        label = names[i] if names and i < len(names) else str(i)
+        print(f"    {label:<6} df/dt {d.freq_trend[i]:+.5f}/yr   "
+              f"ybar {d.mean_type_mean[i]:7.3f}   "
               f"freq {d.per_type_frequency[i]:+.5f}   "
               f"int {d.per_type_intensity[i]:+.5f}")
 
@@ -119,6 +86,15 @@ def report(d: dec.Decomposition, boot: dict, units: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", default="")
+    parser.add_argument(
+        "--labels", default=None,
+        help="path to a published SWT label file; overrides the fitted types")
+    parser.add_argument(
+        "--grouping", default="regime", choices=["regime", "type"],
+        help="with --labels: 8 weather regimes, or all 30 synoptic types")
+    parser.add_argument(
+        "--shift-days", type=int, default=0,
+        help="move the labels this many days relative to the impact series")
     parser.add_argument(
         "--index", default="rain", choices=["rain", "tmax", "hot"],
         help="rain, tmax (mean daily maximum), or hot (90th-percentile days)")
@@ -142,9 +118,22 @@ def main() -> int:
     start = int(domain["period"]["start"][:4])
     end = int(domain["period"]["end"][:4])
 
-    types = xr.open_zarr(paths.work / f"types{args.tag}.zarr", consolidated=True)
-    labels = types["type"].load()
-    k = int(types.attrs["k"])
+    if args.labels:
+        from src.io import swt
+
+        labels, names = swt.load(
+            args.labels, grouping=args.grouping, shift_days=args.shift_days
+        )
+        k = len(names)
+        print(f"labels: {args.labels}")
+        print(f"        {k} {args.grouping}s from {labels.attrs.get('source', '')}")
+        if args.shift_days:
+            print(f"        {labels.attrs['day_shift']}")
+    else:
+        types = xr.open_zarr(paths.work / f"types{args.tag}.zarr", consolidated=True)
+        labels = types["type"].load()
+        k = int(types.attrs["k"])
+        names = [str(i) for i in range(k)]
 
     rain = load_impact(paths, target, start, end, args.index).compute()
     rain = regional.align_to(rain, labels)
@@ -169,9 +158,13 @@ def main() -> int:
         table = dec.yearly_table(rain, labels, k, season=s)
         d = dec.decompose(table)
         boot = dec.block_bootstrap(table, n=args.boot, block=args.block)
-        report(d, boot, units)
+        report(d, boot, units, names)
 
-    if args.seeds > 1:
+    if args.seeds > 1 and args.labels:
+        print("\nSkipping the partition spread: published labels are a fixed")
+        print("stratification, not one refitted here. Their own sensitivity to")
+        print("the clustering would have to come from the authors' pipeline.")
+    elif args.seeds > 1:
         print(f"\n=== across {args.seeds} refitted partitions ===")
         eof = xr.open_zarr(paths.work / f"eof{args.tag}.zarr", consolidated=True)
         n_modes = int(types.attrs["n_modes"])

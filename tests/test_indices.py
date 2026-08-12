@@ -13,6 +13,8 @@ import xarray as xr
 
 from src.attribute.indices import (
     attributable_fraction,
+    monthly_to_season,
+    read_nino34,
     residual_trend,
     ridge_index,
     regress_on_index,
@@ -317,3 +319,91 @@ def test_ratio_is_suppressed_for_a_type_that_barely_changes():
     out = attributable_fraction(freq, index, observed)
     assert np.isfinite(out["ratio"][0])
     assert np.isnan(out["ratio"][1])
+
+
+# --- reading the Nino 3.4 file -------------------------------------------
+
+def write_nino_file(path, first=1948, last=1950, seed=0, missing=False):
+    """A file in the NOAA PSL layout: header, one row per year, trailing notes."""
+    rng = np.random.default_rng(seed)
+    lines = [f"{first}        {last}"]
+    for year in range(first, last + 1):
+        values = rng.normal(0, 1, 12)
+        if missing and year == last:
+            values[-3:] = -99.99
+        lines.append(f" {year} " + " ".join(f"{v:8.2f}" for v in values))
+    lines += ["  Nino 3.4 anomaly from NOAA PSL", "  -99.99", "  more notes"]
+    path.write_text("\n".join(lines))
+    return path
+
+
+def test_reader_gives_one_value_per_month(tmp_path):
+    path = write_nino_file(tmp_path / "nino.data", 1948, 1950)
+    assert read_nino34(path).sizes["time"] == 36
+
+
+def test_reader_starts_at_the_stated_first_year(tmp_path):
+    path = write_nino_file(tmp_path / "nino.data", 1948, 1950)
+    assert pd.Timestamp(read_nino34(path).time.values[0]).year == 1948
+
+
+def test_reader_stops_at_the_trailing_metadata(tmp_path):
+    """The file ends with notes and a sentinel that must not become data."""
+    path = write_nino_file(tmp_path / "nino.data", 1948, 1950)
+    values = read_nino34(path).values
+    assert np.all(np.abs(values) < 10)
+
+
+def test_reader_drops_missing_months(tmp_path):
+    """Recent months are flagged with a sentinel rather than left out."""
+    path = write_nino_file(tmp_path / "nino.data", 1948, 1950, missing=True)
+    assert read_nino34(path).sizes["time"] == 33
+
+
+def test_reader_raises_on_a_file_with_no_data(tmp_path):
+    path = tmp_path / "empty.data"
+    path.write_text("1948        1950\n  just notes\n")
+    with pytest.raises(ValueError, match="no data rows"):
+        read_nino34(path)
+
+
+def test_reader_records_what_the_index_is(tmp_path):
+    path = write_nino_file(tmp_path / "nino.data")
+    assert "170W" in read_nino34(path).attrs["definition"]
+
+
+# --- monthly to seasonal -------------------------------------------------
+
+def test_monthly_to_season_gives_one_value_per_year(tmp_path):
+    path = write_nino_file(tmp_path / "nino.data", 1980, 1999)
+    assert monthly_to_season(read_nino34(path)).sizes["year"] == 20
+
+
+def test_warm_season_counts_november_with_the_following_january(tmp_path):
+    """Same convention as the decomposition, or the two would not line up."""
+    path = write_nino_file(tmp_path / "nino.data", 1980, 1982)
+    monthly = read_nino34(path)
+    warm = monthly_to_season(monthly, "warm")
+
+    november = float(monthly.sel(time="1980-11").values[0])
+    december = float(monthly.sel(time="1980-12").values[0])
+    january = float(monthly.sel(time="1981-01").values[0])
+    february = float(monthly.sel(time="1981-02").values[0])
+    march = float(monthly.sel(time="1981-03").values[0])
+
+    expected = np.mean([november, december, january, february, march])
+    assert float(warm.sel(year=1981)) == pytest.approx(expected)
+
+
+def test_cool_season_uses_the_calendar_year(tmp_path):
+    path = write_nino_file(tmp_path / "nino.data", 1980, 1982)
+    monthly = read_nino34(path)
+    cool = monthly_to_season(monthly, "cool")
+    expected = float(monthly.sel(time=slice("1981-04", "1981-10")).mean())
+    assert float(cool.sel(year=1981)) == pytest.approx(expected)
+
+
+def test_seasonal_aggregation_rejects_an_unknown_season(tmp_path):
+    path = write_nino_file(tmp_path / "nino.data")
+    with pytest.raises(ValueError, match="season must be"):
+        monthly_to_season(read_nino34(path), "monsoon")

@@ -16,6 +16,7 @@ import xarray as xr
 
 from src.preprocess.anomaly import (
     anomaly,
+    year_length,
     daily_mean,
     detrend,
     harmonic_climatology,
@@ -208,3 +209,80 @@ def test_anomaly_of_a_constant_float32_field_is_zero_not_biased():
 def test_standardise_gives_unit_variance():
     out = standardise(daily_mean(make_field(amplitude=0.0, noise=2.0)))
     assert float(out.std("time").mean()) == pytest.approx(1.0, rel=1e-6)
+
+
+# --- model calendars -----------------------------------------------------
+
+def make_cftime_field(calendar="360_day", n_years=6, amplitude=5.0):
+    """A field on a model calendar, with a pure annual cycle.
+
+    CMIP6 models run on several calendars. A 360-day year reaches day 360 in
+    late December, so the seasonal cycle must be fitted against 360 rather
+    than 365.25 or the fit runs slow and leaves a residual annual signal.
+    """
+    import cftime
+
+    per_year = int(year_length_for(calendar))
+    dates = xr.date_range(
+        "1979-01-01", periods=n_years * per_year, freq="1D",
+        calendar=calendar, use_cftime=True,
+    )
+    doy = np.array([d.dayofyr for d in dates], dtype=float)
+    signal = 1013.0 + amplitude * np.sin(2 * np.pi * doy / per_year)
+    data = np.repeat(signal[:, None, None], 3, axis=1).repeat(4, axis=2)
+
+    return xr.DataArray(
+        data.astype("float32"),
+        dims=("time", "latitude", "longitude"),
+        coords={
+            "time": dates,
+            "latitude": [-20.0, -30.0, -40.0],
+            "longitude": [140.0, 145.0, 150.0, 155.0],
+        },
+        name="mslp",
+    )
+
+
+def year_length_for(calendar):
+    return {"360_day": 360.0, "noleap": 365.0, "all_leap": 366.0}.get(calendar, 365.25)
+
+
+def test_year_length_follows_the_calendar():
+    for calendar, expected in (("360_day", 360.0), ("noleap", 365.0),
+                               ("all_leap", 366.0)):
+        field = make_cftime_field(calendar=calendar, n_years=2)
+        assert year_length(field.time) == expected
+
+
+def test_year_length_defaults_for_a_standard_calendar():
+    assert year_length(make_field(n_years=1).time) == pytest.approx(365.25)
+
+
+def test_seasonal_cycle_is_removed_on_a_360_day_calendar():
+    """The defect the calendar lookup exists for.
+
+    Dividing a 360-day year by 365.25 leaves the fitted cycle running about
+    one and a half per cent slow, which smears the fit and leaves a visible
+    annual residual in the anomalies.
+    """
+    field = make_cftime_field(calendar="360_day", n_years=8, amplitude=5.0)
+    assert float(np.abs(anomaly(field, n_harmonics=3)).max()) < 0.05
+
+
+def test_seasonal_cycle_is_removed_on_a_noleap_calendar():
+    field = make_cftime_field(calendar="noleap", n_years=8, amplitude=5.0)
+    assert float(np.abs(anomaly(field, n_harmonics=3)).max()) < 0.05
+
+
+def test_a_wrong_year_length_would_leave_a_residual():
+    """Shows the error is real, not hypothetical: fitting a 360-day cycle
+    against a 365.25-day design leaves an order-of-magnitude larger residual."""
+    field = make_cftime_field(calendar="360_day", n_years=8, amplitude=5.0)
+    correct = float(np.abs(anomaly(field, n_harmonics=3)).max())
+
+    mislabelled = field.assign_coords(
+        time=xr.date_range("1979-01-01", periods=field.sizes["time"],
+                           freq="1D", calendar="standard", use_cftime=True)
+    )
+    wrong = float(np.abs(anomaly(mislabelled, n_harmonics=3)).max())
+    assert wrong > 5 * correct
